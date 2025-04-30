@@ -23,8 +23,8 @@ To quickly test metrics locally (without installing Prometheus Grafana in the cl
     ```
 3. In another terminal, use `kubectl port-forward` to expose the controller's service locally
     ```bash
-    kubectl port-forward service/devworkspace-controller-metrics 8443:8443 &
-    kubectl port-forward service/devworkspace-webhookserver 9443:9443
+    kubectl port-forward service/devworkspace-controller-metrics 8443:8443 -n$NAMESPACE &
+    kubectl port-forward service/devworkspace-webhookserver 9443:9443 -nopenshift-operators
     ```
     We can check that the token works and metrics are accessible:
     ```bash
@@ -62,10 +62,10 @@ To quickly test metrics locally (without installing Prometheus Grafana in the cl
     ```
 5. Start prometheus in a container locally
     ```bash
-    docker run -d --name prometheus \
+    podman run -d --name prometheus \
       --network=host \
       -v $(pwd)/prometheus.yaml:/etc/prometheus/prometheus.yaml:z \
-      prom/prometheus \
+      docker.io/prom/prometheus \
       --config.file=/etc/prometheus/prometheus.yaml \
       --web.listen-address=:9999 \
       --log.level=debug
@@ -73,6 +73,6 @@ To quickly test metrics locally (without installing Prometheus Grafana in the cl
     note: `--network=host` is required to enable the docker container to access `localhost` correctly (otherwise, `localhost` is within the container)
 6. Start grafana in a container locally
     ```bash
-    docker run -d --name grafana -p 3000:3000 grafana/grafana
+    podman run -d --name grafana -p 3000:3000 docker.io/grafana/grafana
     ```
 7. Navigate to `localhost:3000`, login as `admin/admin`, add the datasource for prometheus (`http://localhost:9999`, `Access: Browser`), and import the dashboard.
