@@ -46,12 +46,7 @@ _create_namespace:
 _gen_configuration_env:
 	mkdir -p $(INTERNAL_TMP_DIR)
 	cat deploy/templates/components/manager/manager.yaml \
-	  | yq -r \
-	    '.spec.template.spec.containers[]
-	      | select(.name=="devworkspace-controller")
-	      | .env[]
-	      | select(has("value"))
-	      | "export \(.name)=\"$${\(.name):-\(.value)}\""' \
+          | yq -r '.spec.template.spec.containers[] | select(.name=="devworkspace-controller") | .env[] | select(has("value")) | "export \(.name)=\"$${\(.name):-\(.value)}\""' \
 	  > $(CONTROLLER_ENV_FILE)
 	echo "export RELATED_IMAGE_devworkspace_webhook_server=$(DWO_IMG)" >> $(CONTROLLER_ENV_FILE)
 	echo "export WEBHOOK_SECRET_NAME=devworkspace-operator-webhook-cert" >> $(CONTROLLER_ENV_FILE)
