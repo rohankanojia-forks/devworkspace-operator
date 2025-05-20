@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	v1 "k8s.io/api/authentication/v1"
 	"log"
 	"time"
 
@@ -63,6 +64,24 @@ func (w *K8sClient) AssignRoleToSA(namespace, serviceAccount, role string) error
 		return nil
 	}
 	return err
+}
+
+func (w *K8sClient) CheckK8sVersion() (string, error) {
+	versionInfo, err := w.kubeClient.Discovery().ServerVersion()
+	if err != nil {
+		return "", err
+	}
+	return versionInfo.String(), nil
+}
+
+func (w *K8sClient) CreateSAToken(namespace string, serviceAccountName string) (string, error) {
+	tokenRequest, err := w.kubeClient.CoreV1().ServiceAccounts(namespace).CreateToken(context.TODO(), serviceAccountName, &v1.TokenRequest{
+		Spec: v1.TokenRequestSpec{},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		return "", err
+	}
+	return tokenRequest.Status.Token, nil
 }
 
 // WaitSAToken waits until a secret with the token related to the specified SA

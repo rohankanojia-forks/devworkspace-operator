@@ -79,9 +79,18 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		ginkgo.Fail("Cannot create test rolebinding for SA. Cause: " + err.Error())
 	}
 
-	token, err := config.AdminK8sClient.WaitSAToken(config.DevWorkspaceNamespace, testServiceAccount)
+	var token = ""
+	version, err := config.AdminK8sClient.CheckK8sVersion()
 	if err != nil {
-		ginkgo.Fail("Cannot get test SA token. Cause: " + err.Error())
+		ginkgo.Fail("Cannot check k8s version. Cause: " + err.Error())
+	}
+	if version >= "v1.24.0" {
+		token, err = config.AdminK8sClient.CreateSAToken(config.OperatorNamespace, testServiceAccount)
+	} else {
+		token, err = config.AdminK8sClient.WaitSAToken(config.DevWorkspaceNamespace, testServiceAccount)
+		if err != nil {
+			ginkgo.Fail("Cannot get test SA token. Cause: " + err.Error())
+		}
 	}
 
 	config.DevK8sClient, err = client.NewK8sClientWithToken(kubeConfig, token)
