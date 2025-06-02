@@ -61,6 +61,14 @@ func buildValidatingWebhookCfg(namespace string) *admregv1.ValidatingWebhookConf
 					},
 				},
 				AdmissionReviewVersions: []string{"v1beta1", "v1"},
+				ObjectSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "controller.devfile.io/create",
+							Operator: "Exists",
+						},
+					},
+				},
 			},
 			{
 				Name:          "validate-devfile.devworkspace-controller.svc",
@@ -85,6 +93,14 @@ func buildValidatingWebhookCfg(namespace string) *admregv1.ValidatingWebhookConf
 					},
 				},
 				AdmissionReviewVersions: []string{"v1beta1", "v1"},
+				ObjectSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "controller.devfile.io/create",
+							Operator: "Exists",
+						},
+					},
+				},
 			},
 		},
 	}
