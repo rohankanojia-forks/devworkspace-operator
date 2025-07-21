@@ -279,13 +279,10 @@ func (r *DevWorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	workspace.Spec.Template = *flattenedWorkspace
 
-	if workspace.Config.EnableExperimentalFeatures != nil && *workspace.Config.EnableExperimentalFeatures {
-		if needsSSHAgentPostStartEvent, err := ssh.NeedsSSHPostStartEvent(clusterAPI, workspace.Namespace); err != nil {
-			reqLogger.Error(err, "Error retrieving SSH secret")
-		} else if needsSSHAgentPostStartEvent {
-			if err = ssh.AddSshAgentPostStartEvent(&workspace.Spec.Template); err != nil {
-				return r.failWorkspace(workspace, "Failed to add ssh-agent initialization postStart event", metrics.ReasonWorkspaceEngineFailure, reqLogger, &reconcileStatus), nil
-			}
+	if workspace.Spec.Template.Attributes.Exists("controller.devfile.io/initialize-ssh-agent") &&
+		workspace.Spec.Template.Attributes.GetBoolean("controller.devfile.io/initialize-ssh-agent", nil) {
+		if err = ssh.AddSshAgentPostStartEvent(&workspace.Spec.Template); err != nil {
+			return r.failWorkspace(workspace, "Failed to add ssh-agent initialization postStart event", metrics.ReasonWorkspaceEngineFailure, reqLogger, &reconcileStatus), nil
 		}
 	}
 
