@@ -88,8 +88,8 @@ func (s *BasicSolver) GetSpecObjects(routing *controllerv1alpha1.DevWorkspaceRou
 	}
 
 	spec := routing.Spec
-	services := getServicesForEndpoints(spec, workspaceMeta)
-	services = append(services, GetDiscoverableServicesForEndpoints(spec, workspaceMeta)...)
+	services := getServicesForEndpoints(spec.Endpoints, workspaceMeta)
+	services = append(services, GetDiscoverableServicesForEndpoints(spec.Endpoints, workspaceMeta)...)
 	routingObjects.Services = services
 	if infrastructure.IsOpenShift() {
 		routingObjects.Routes = getRoutesForSpec(routingSuffix, spec.Endpoints, workspaceMeta)

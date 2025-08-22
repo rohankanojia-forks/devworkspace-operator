@@ -16,6 +16,8 @@
 package solvers
 
 import (
+	"strings"
+
 	controllerv1alpha1 "github.com/devfile/devworkspace-operator/apis/controller/v1alpha1"
 	"github.com/devfile/devworkspace-operator/pkg/common"
 	"github.com/devfile/devworkspace-operator/pkg/constants"
@@ -36,9 +38,8 @@ type DevWorkspaceMetadata struct {
 
 // GetDiscoverableServicesForEndpoints converts the endpoint list into a set of services, each corresponding to a single discoverable
 // endpoint from the list. Endpoints with the NoneEndpointExposure are ignored.
-func GetDiscoverableServicesForEndpoints(routingSpec controllerv1alpha1.DevWorkspaceRoutingSpec, meta DevWorkspaceMetadata) []corev1.Service {
+func GetDiscoverableServicesForEndpoints(endpoints map[string]controllerv1alpha1.EndpointList, meta DevWorkspaceMetadata) []corev1.Service {
 	var services []corev1.Service
-	endpoints := routingSpec.Endpoints
 	for componentName, machineEndpoints := range endpoints {
 		for _, endpoint := range machineEndpoints {
 			if endpoint.Exposure == controllerv1alpha1.NoneEndpointExposure {
@@ -61,10 +62,11 @@ func GetDiscoverableServicesForEndpoints(routingSpec controllerv1alpha1.DevWorks
 						Namespace: meta.Namespace,
 						Labels: map[string]string{
 							constants.DevWorkspaceIDLabel: meta.DevWorkspaceId,
+							"workspace.dev/component":     componentName,
 						},
-						Annotations: mergeServiceAnnotations(map[string]string{
+						Annotations: map[string]string{
 							constants.DevWorkspaceDiscoverableServiceAnnotation: "true",
-						}, routingSpec.Service[componentName]),
+						},
 					},
 					Spec: corev1.ServiceSpec{
 						Ports:    []corev1.ServicePort{servicePort},
@@ -80,9 +82,8 @@ func GetDiscoverableServicesForEndpoints(routingSpec controllerv1alpha1.DevWorks
 
 // GetServiceForEndpoints returns a single service that exposes all endpoints of given exposure types, possibly also including the discoverable types.
 // `nil` is returned if the service would expose no ports satisfying the provided criteria.
-func GetServiceForEndpoints(routingSpec controllerv1alpha1.DevWorkspaceRoutingSpec, meta DevWorkspaceMetadata, includeDiscoverable bool, exposureType ...controllerv1alpha1.EndpointExposure) *corev1.Service {
+func GetServiceForEndpoints(endpoints map[string]controllerv1alpha1.EndpointList, meta DevWorkspaceMetadata, includeDiscoverable bool, exposureType ...controllerv1alpha1.EndpointExposure) *corev1.Service {
 	// "set" of ports that are still left for exposure
-	endpoints := routingSpec.Endpoints
 	ports := map[int]bool{}
 	for _, es := range endpoints {
 		for _, endpoint := range es {
@@ -97,7 +98,7 @@ func GetServiceForEndpoints(routingSpec controllerv1alpha1.DevWorkspaceRoutingSp
 	}
 
 	var exposedPorts []corev1.ServicePort
-	var annotations = make(map[string]string)
+	var componentsInvolved []string
 
 	for componentName, es := range endpoints {
 		for _, endpoint := range es {
@@ -120,7 +121,7 @@ func GetServiceForEndpoints(routingSpec controllerv1alpha1.DevWorkspaceRoutingSp
 				})
 			}
 		}
-		annotations = mergeServiceAnnotations(annotations, routingSpec.Service[componentName])
+		componentsInvolved = append(componentsInvolved, componentName)
 	}
 
 	if len(exposedPorts) == 0 {
@@ -134,7 +135,9 @@ func GetServiceForEndpoints(routingSpec controllerv1alpha1.DevWorkspaceRoutingSp
 			Labels: map[string]string{
 				constants.DevWorkspaceIDLabel: meta.DevWorkspaceId,
 			},
-			Annotations: annotations,
+			Annotations: map[string]string{
+				"workspace.dev/component": strings.Join(componentsInvolved, ","),
+			},
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: meta.PodSelector,
@@ -144,12 +147,12 @@ func GetServiceForEndpoints(routingSpec controllerv1alpha1.DevWorkspaceRoutingSp
 	}
 }
 
-func getServicesForEndpoints(routingSpec controllerv1alpha1.DevWorkspaceRoutingSpec, meta DevWorkspaceMetadata) []corev1.Service {
-	if len(routingSpec.Endpoints) == 0 {
+func getServicesForEndpoints(endpoints map[string]controllerv1alpha1.EndpointList, meta DevWorkspaceMetadata) []corev1.Service {
+	if len(endpoints) == 0 {
 		return nil
 	}
 
-	service := GetServiceForEndpoints(routingSpec, meta, true, controllerv1alpha1.PublicEndpointExposure, controllerv1alpha1.InternalEndpointExposure)
+	service := GetServiceForEndpoints(endpoints, meta, true, controllerv1alpha1.PublicEndpointExposure, controllerv1alpha1.InternalEndpointExposure)
 	if service == nil {
 		return nil
 	}
