@@ -119,10 +119,13 @@ func isOperatorNamespace(namespace string) bool {
 }
 
 // omitOperatorOnlyWorkspaceFields returns a copy of config with pod-level fields
-// removed. Workspace-namespace DWOCs may still override operational settings
-// (storage, timeouts, imagePullPolicy, etc.). Fields such as security context,
-// service account, scheduler, and default template are applied only from the
-// operator namespace.
+// removed. Callers merge the result onto the global configuration, so an omitted
+// field keeps the global value.
+// Workspace-namespace DWOCs may still override operational settings
+// (storage, timeouts, imagePullPolicy, containerResourceCaps, and similar).
+// A workspace-namespace containerResourceCaps entry replaces the global CPU and
+// memory quantities it sets. Fields such as security context, service account,
+// scheduler, and default template are applied only from the operator namespace.
 func omitOperatorOnlyWorkspaceFields(config *controller.OperatorConfiguration) *controller.OperatorConfiguration {
 	if config == nil {
 		return nil

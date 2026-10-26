@@ -357,15 +357,30 @@ spec:
         namespace: <string>
 ----
 
-*Note:* the alternate DevWorkspaceOperatorConfig will be
-merged with the default DevWorkspaceOperatorConfig, overriding
-fields in the default configuration. Fields unset in the overridden
-configuration will use the global values.
+*Note:* the alternate DevWorkspaceOperatorConfig is merged into the global
+DevWorkspaceOperatorConfig. Fields set in the alternate config override the
+global values. Fields that the alternate config leaves unset keep the global values.
 If the referenced DevWorkspaceOperatorConfig is not in the operator
-namespace, pod-level fields (`podSecurityContext`,
+namespace, these pod-level fields are ignored: `podSecurityContext`,
 `containerSecurityContext`, `serviceAccount`, `runtimeClassName`,
 `defaultTemplate`, `podAnnotations`, `schedulerName`, `initContainers`,
-`hostUsers`, `overrides`, `projectClone`, and `restore`) are ignored.
+`hostUsers`, `overrides`, `projectClone`, and `restore`.
+An ignored field keeps the global value. The workspace still starts, and
+the operator does not return an error for these fields.
+
+Pod-level settings in a workspace-namespace DevWorkspaceOperatorConfig no longer apply.
+To keep a setting:
+
+* Add settings for every workspace to the global `devworkspace-operator-config` in the operator namespace.
+  Workspaces can keep referencing a workspace-namespace config for operational settings such as storage and `imagePullPolicy`.
+* Add settings for one workspace to a DevWorkspaceOperatorConfig in the operator namespace, and set the attribute `namespace` to that namespace.
+
+Keep a user-owned DevWorkspaceOperatorConfig in the workspace namespace.
+Move only the approved pod-level fields into the operator namespace.
+
+`containerResourceCaps` is still applied from a workspace-namespace DevWorkspaceOperatorConfig.
+CPU and memory quantities set there replace the global quantities.
+A quantity of `0` removes that cap when the operator applies it.
 
 ## Configuring cross-namespace DevWorkspaceTemplate imports
 

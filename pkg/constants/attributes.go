@@ -33,8 +33,9 @@ const (
 	// The fields which are set in the external DevWorkspaceOperatorConfig will overwrite those existing in the
 	// internal/global DevWorkspaceOperatorConfig during the merge.
 	// The referenced DevWorkspaceOperatorConfig must be in the DevWorkspace's namespace or the operator namespace.
-	// Pod-level fields (security contexts, service account, default template, etc.) from DWOCs outside
-	// the operator namespace are ignored.
+	// Pod-level fields (security contexts, service account, default template, init containers, and similar)
+	// from DWOCs outside the operator namespace are ignored and keep the global configuration.
+	// Operational settings, including containerResourceCaps, can still be overridden from the workspace namespace.
 	// The structure of the attribute value should contain two strings: name and namespace.
 	// 'name' specifies the metadata.name of the external operator configuration.
 	// 'namespace' specifies the metadata.namespace of the external operator configuration                                                                           .

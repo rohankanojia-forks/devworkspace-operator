@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/devfile/devworkspace-operator/apis/controller/v1alpha1"
@@ -247,12 +248,14 @@ func TestRejectsExternalDWOCOutsideAllowedNamespaces(t *testing.T) {
 		return
 	}
 
-	resolvedConfig, err := ResolveConfigForWorkspace(workspace, client)
+	spy := &countingClient{Client: client, getsByNamespace: map[string]int{}}
+	resolvedConfig, err := ResolveConfigForWorkspace(workspace, spy)
 	if !assert.Error(t, err, "Should reject DWOC references outside the workspace and operator namespaces") {
 		return
 	}
 	assert.Nil(t, resolvedConfig, "No config should be returned for a disallowed DWOC reference")
 	assert.Contains(t, err.Error(), "must be in the DevWorkspace namespace")
+	assert.Zero(t, spy.getsByNamespace["other-ns"], "disallowed namespace must be rejected before the DWOC is read")
 }
 
 func TestOmitsPodLevelFieldsFromWorkspaceNamespaceDWOC(t *testing.T) {
@@ -288,10 +291,48 @@ func TestOmitsPodLevelFieldsFromWorkspaceNamespaceDWOC(t *testing.T) {
 						{Name: "RESTORE_FROM_WORKSPACE_DWOC", Value: "true"},
 					},
 				},
+				ContainerResourceCaps: &corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("4"),
+						corev1.ResourceMemory: resource.MustParse("0"),
+					},
+				},
 			},
 		},
 	}
-	clusterConfig := buildConfig(defaultConfig.DeepCopy())
+	// Global values differ from built-in defaults and from the workspace-local DWOC,
+	// so these assertions show that filtering preserves administrator settings.
+	globalConfig := defaultConfig.DeepCopy()
+	globalConfig.Workspace.PodSecurityContext = &corev1.PodSecurityContext{RunAsUser: pointer.Int64(4321)}
+	globalConfig.Workspace.ContainerSecurityContext = &corev1.SecurityContext{RunAsNonRoot: pointer.Bool(true)}
+	globalConfig.Workspace.ServiceAccount.ServiceAccountName = "global-sa"
+	globalConfig.Workspace.RuntimeClassName = pointer.String("global-runtime")
+	globalConfig.Workspace.SchedulerName = "global-scheduler"
+	globalConfig.Workspace.PodAnnotations = map[string]string{"test.devfile.io/from-global": "true"}
+	globalConfig.Workspace.DefaultTemplate = &dw.DevWorkspaceTemplateSpecContent{
+		Components: []dw.Component{{
+			Name: "global-component",
+			ComponentUnion: dw.ComponentUnion{
+				Container: &dw.ContainerComponent{
+					Container: dw.Container{Image: "example.com/global:latest"},
+				},
+			},
+		}},
+	}
+	globalConfig.Workspace.HostUsers = pointer.Bool(true)
+	globalConfig.Workspace.InitContainers = []corev1.Container{{Name: "global-init", Image: "example.com/global-init:latest"}}
+	globalConfig.Workspace.Overrides = &v1alpha1.OverrideConfig{
+		RestrictedContainerOverrideFields: []string{"securityContext.privileged=true"},
+	}
+	globalConfig.Workspace.ProjectCloneConfig.Image = "example.com/global-clone:latest"
+	globalConfig.Workspace.RestoreConfig.ImagePullPolicy = corev1.PullAlways
+	globalConfig.Workspace.ContainerResourceCaps = &corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("1Gi"),
+		},
+	}
+	clusterConfig := buildConfig(globalConfig)
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig, externalConfig).Build()
 	err := SetupControllerConfig(client)
 	if !assert.NoError(t, err, "Should not return error") {
@@ -305,18 +346,44 @@ func TestOmitsPodLevelFieldsFromWorkspaceNamespaceDWOC(t *testing.T) {
 
 	assert.Equal(t, "Never", resolvedConfig.Workspace.ImagePullPolicy, "Operational fields should still merge")
 	assert.Equal(t, "workspace-pvc", resolvedConfig.Workspace.PVCName, "Operational fields should still merge")
-	assert.Equal(t, internalConfig.Workspace.PodSecurityContext, resolvedConfig.Workspace.PodSecurityContext)
-	assert.Equal(t, internalConfig.Workspace.ContainerSecurityContext, resolvedConfig.Workspace.ContainerSecurityContext)
-	assert.Equal(t, internalConfig.Workspace.ServiceAccount, resolvedConfig.Workspace.ServiceAccount)
-	assert.Equal(t, internalConfig.Workspace.RuntimeClassName, resolvedConfig.Workspace.RuntimeClassName)
-	assert.Equal(t, internalConfig.Workspace.SchedulerName, resolvedConfig.Workspace.SchedulerName)
-	assert.Equal(t, internalConfig.Workspace.PodAnnotations, resolvedConfig.Workspace.PodAnnotations)
-	assert.Nil(t, resolvedConfig.Workspace.DefaultTemplate)
-	assert.Equal(t, internalConfig.Workspace.HostUsers, resolvedConfig.Workspace.HostUsers)
-	assert.Empty(t, resolvedConfig.Workspace.InitContainers)
-	assert.Equal(t, internalConfig.Workspace.Overrides, resolvedConfig.Workspace.Overrides)
-	assert.Equal(t, internalConfig.Workspace.ProjectCloneConfig, resolvedConfig.Workspace.ProjectCloneConfig)
-	assert.Equal(t, internalConfig.Workspace.RestoreConfig, resolvedConfig.Workspace.RestoreConfig)
+	ws := resolvedConfig.Workspace
+	assert.Equal(t, internalConfig.Workspace.PodSecurityContext, ws.PodSecurityContext)
+	assert.Equal(t, int64(4321), *ws.PodSecurityContext.RunAsUser)
+	assert.Equal(t, internalConfig.Workspace.ContainerSecurityContext, ws.ContainerSecurityContext)
+	assert.Nil(t, ws.ContainerSecurityContext.Privileged)
+	assert.Equal(t, pointer.Bool(true), ws.ContainerSecurityContext.RunAsNonRoot)
+	assert.Equal(t, internalConfig.Workspace.ServiceAccount, ws.ServiceAccount)
+	assert.Equal(t, "global-sa", ws.ServiceAccount.ServiceAccountName)
+	assert.Equal(t, pointer.String("global-runtime"), ws.RuntimeClassName)
+	assert.Equal(t, "global-scheduler", ws.SchedulerName)
+	assert.Equal(t, map[string]string{"test.devfile.io/from-global": "true"}, ws.PodAnnotations)
+	if !assert.NotNil(t, ws.DefaultTemplate) || !assert.Len(t, ws.DefaultTemplate.Components, 1) {
+		return
+	}
+	assert.Equal(t, internalConfig.Workspace.DefaultTemplate, ws.DefaultTemplate)
+	assert.Equal(t, "global-component", ws.DefaultTemplate.Components[0].Name)
+	assert.Equal(t, pointer.Bool(true), ws.HostUsers)
+	if !assert.Len(t, ws.InitContainers, 1) {
+		return
+	}
+	assert.Equal(t, internalConfig.Workspace.InitContainers, ws.InitContainers)
+	assert.Equal(t, "global-init", ws.InitContainers[0].Name)
+	assert.Equal(t, internalConfig.Workspace.Overrides, ws.Overrides)
+	assert.Equal(t, []string{"securityContext.privileged=true"}, ws.Overrides.RestrictedContainerOverrideFields)
+	assert.Equal(t, internalConfig.Workspace.ProjectCloneConfig, ws.ProjectCloneConfig)
+	assert.Equal(t, "example.com/global-clone:latest", ws.ProjectCloneConfig.Image)
+	assert.Equal(t, internalConfig.Workspace.RestoreConfig, ws.RestoreConfig)
+	assert.Equal(t, corev1.PullAlways, ws.RestoreConfig.ImagePullPolicy)
+	assert.Empty(t, ws.RestoreConfig.Env)
+	if !assert.NotNil(t, ws.ContainerResourceCaps) {
+		return
+	}
+	expectedCPUCap := resource.MustParse("4")
+	expectedMemoryCap := resource.MustParse("0")
+	cpuCap := ws.ContainerResourceCaps.Limits[corev1.ResourceCPU]
+	memoryCap := ws.ContainerResourceCaps.Limits[corev1.ResourceMemory]
+	assert.Equal(t, expectedCPUCap.String(), cpuCap.String(), "workspace-local CPU cap should replace the global cap")
+	assert.Equal(t, expectedMemoryCap.String(), memoryCap.String(), "a zero memory cap should replace the global cap")
 }
 
 func TestAppliesPodLevelFieldsFromOperatorNamespaceDWOC(t *testing.T) {
@@ -365,6 +432,50 @@ func TestAppliesPodLevelFieldsFromOperatorNamespaceDWOC(t *testing.T) {
 	assert.Equal(t, corev1.PullNever, resolvedConfig.Workspace.RestoreConfig.ImagePullPolicy)
 }
 
+func TestRetainsPodLevelFieldsWhenWorkspaceIsInOperatorNamespace(t *testing.T) {
+	setupForTest(t)
+
+	workspace := workspaceReferencingExternalConfig(t, testNamespace, externalConfigName, testNamespace)
+
+	privileged := true
+	externalConfig := &v1alpha1.DevWorkspaceOperatorConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      externalConfigName,
+			Namespace: testNamespace,
+		},
+		Config: &v1alpha1.OperatorConfiguration{
+			Workspace: &v1alpha1.WorkspaceConfig{
+				ContainerSecurityContext: &corev1.SecurityContext{Privileged: &privileged},
+				SchedulerName:            "custom-scheduler",
+				ServiceAccount:           &v1alpha1.ServiceAccountConfig{ServiceAccountName: "operator-sa"},
+				InitContainers:           []corev1.Container{{Name: "operator-init", Image: "example.com/operator-init:latest"}},
+			},
+		},
+	}
+	clusterConfig := buildConfig(defaultConfig.DeepCopy())
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig, externalConfig).Build()
+	err := SetupControllerConfig(client)
+	if !assert.NoError(t, err, "Should not return error") {
+		return
+	}
+
+	resolvedConfig, err := ResolveConfigForWorkspace(workspace, client)
+	if !assert.NoError(t, err, "A DWOC in the operator namespace should keep pod-level fields when the workspace is there too") {
+		return
+	}
+
+	if !assert.NotNil(t, resolvedConfig.Workspace.ContainerSecurityContext) {
+		return
+	}
+	assert.Equal(t, &privileged, resolvedConfig.Workspace.ContainerSecurityContext.Privileged)
+	assert.Equal(t, "custom-scheduler", resolvedConfig.Workspace.SchedulerName)
+	assert.Equal(t, "operator-sa", resolvedConfig.Workspace.ServiceAccount.ServiceAccountName)
+	if !assert.Len(t, resolvedConfig.Workspace.InitContainers, 1) {
+		return
+	}
+	assert.Equal(t, "operator-init", resolvedConfig.Workspace.InitContainers[0].Name)
+}
+
 func workspaceReferencingExternalConfig(t *testing.T, workspaceNS, dwocName, dwocNS string) *dw.DevWorkspace {
 	t.Helper()
 	workspace := &dw.DevWorkspace{}
@@ -378,6 +489,17 @@ func workspaceReferencingExternalConfig(t *testing.T, workspaceNS, dwocName, dwo
 		Attributes: attrs,
 	}
 	return workspace
+}
+
+// countingClient records Get calls by namespace.
+type countingClient struct {
+	crclient.Client
+	getsByNamespace map[string]int
+}
+
+func (c *countingClient) Get(ctx context.Context, key crclient.ObjectKey, obj crclient.Object, opts ...crclient.GetOption) error {
+	c.getsByNamespace[key.Namespace]++
+	return c.Client.Get(ctx, key, obj, opts...)
 }
 
 func TestSetupControllerAlwaysSetsDefaultClusterRoutingSuffix(t *testing.T) {
@@ -777,6 +899,9 @@ func TestResolveConfigForWorkspaceWithNetworkPolicy(t *testing.T) {
 	setupForTest(t)
 
 	workspace := &dw.DevWorkspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: externalConfigNamespace,
+		},
 		Spec: dw.DevWorkspaceSpec{
 			Template: dw.DevWorkspaceTemplateSpec{
 				DevWorkspaceTemplateSpecContent: dw.DevWorkspaceTemplateSpecContent{

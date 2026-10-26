@@ -44,9 +44,18 @@ spec:
         name: <name of DevWorkspaceOperatorConfig CR>
         namespace: <DevWorkspace namespace or operator namespace>
 ```
-Configuration specified as above will be merged into the default global configuration, overriding any values present.
+Configuration specified as above is merged into the global configuration. Fields set in the referenced DevWorkspaceOperatorConfig override the global values. Fields that it leaves unset keep the global values.
 
-The referenced `DevWorkspaceOperatorConfig` must live in the DevWorkspace's namespace or the operator namespace. If it is not in the operator namespace, pod-level fields (`podSecurityContext`, `containerSecurityContext`, `serviceAccount`, `runtimeClassName`, `defaultTemplate`, `podAnnotations`, `schedulerName`, `initContainers`, `hostUsers`, `overrides`, `projectClone`, and `restore`) are ignored.
+The referenced `DevWorkspaceOperatorConfig` must live in the DevWorkspace's namespace or the operator namespace. From a DevWorkspaceOperatorConfig outside the operator namespace, the operator ignores these pod-level fields: `podSecurityContext`, `containerSecurityContext`, `serviceAccount`, `runtimeClassName`, `defaultTemplate`, `podAnnotations`, `schedulerName`, `initContainers`, `hostUsers`, `overrides`, `projectClone`, and `restore`. Each ignored field keeps the global value. The workspace still starts, and referencing those fields does not return an error.
+
+Pod-level settings previously stored in a workspace-namespace DevWorkspaceOperatorConfig no longer apply. To keep one:
+
+- Add settings for every workspace to the global `devworkspace-operator-config` in the operator namespace. Workspaces can continue to reference a workspace-namespace config for operational settings such as storage and `imagePullPolicy`.
+- Add settings for a single workspace to a DevWorkspaceOperatorConfig in the operator namespace, and point the workspace attribute at that namespace.
+
+Keep a user-owned DevWorkspaceOperatorConfig in the workspace namespace. Move only the approved pod-level fields into the operator namespace.
+
+`containerResourceCaps` is still applied from a workspace-namespace DevWorkspaceOperatorConfig. CPU and memory quantities set there replace the global quantities. A quantity of `0` removes that cap when the operator applies it.
 
 ## Configuring the Webhook deployment
 The `devworkspace-webhook-server` deployment can be configured in the global `DevWorkspaceOperatorConfig`. 
