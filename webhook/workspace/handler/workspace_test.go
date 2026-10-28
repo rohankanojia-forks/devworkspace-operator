@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	dwv2 "github.com/devfile/api/v2/pkg/apis/workspaces/v1alpha2"
+	"github.com/devfile/api/v2/pkg/attributes"
 	controllerv1alpha1 "github.com/devfile/devworkspace-operator/apis/controller/v1alpha1"
 	"github.com/devfile/devworkspace-operator/pkg/config"
 	"github.com/devfile/devworkspace-operator/pkg/constants"
@@ -30,6 +31,7 @@ import (
 	authnv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -142,6 +144,64 @@ func TestMutateWorkspaceV1alpha2OnUpdate_StartingWorkspaceRunsValidation(t *test
 	resp := handler.MutateWorkspaceV1alpha2OnUpdate(context.Background(), req)
 
 	assert.False(t, resp.Allowed, "starting a workspace with an invalid spec should be denied")
+}
+
+func TestMutateWorkspaceV1alpha2OnUpdate_DeletingWorkspaceWithMissingDWOC(t *testing.T) {
+	handler := newTestWebhookHandler(t)
+	oldWksp := getDevWorkspaceWithMissingDWOC()
+	deletionTime := metav1.Now()
+	oldWksp.DeletionTimestamp = &deletionTime
+	oldWksp.Finalizers = []string{constants.StorageCleanupFinalizer}
+	newWksp := oldWksp.DeepCopy()
+	newWksp.Finalizers = nil
+
+	resp := handler.MutateWorkspaceV1alpha2OnUpdate(context.Background(), buildUpdateRequest(t, oldWksp, newWksp))
+	assert.True(t, resp.Allowed, "finalizers must be removable after a referenced DWOC disappears")
+}
+
+func TestMutateWorkspaceV1alpha2OnUpdate_DeletingWorkspaceSpecChangeStillValidated(t *testing.T) {
+	handler := newTestWebhookHandler(t)
+	oldWksp := getDevWorkspaceWithMissingDWOC()
+	deletionTime := metav1.Now()
+	oldWksp.DeletionTimestamp = &deletionTime
+	newWksp := oldWksp.DeepCopy()
+	newWksp.Spec.RoutingClass = "cluster"
+
+	resp := handler.MutateWorkspaceV1alpha2OnUpdate(context.Background(), buildUpdateRequest(t, oldWksp, newWksp))
+	assert.False(t, resp.Allowed, "spec changes must still be checked while a workspace is deleting")
+}
+
+func TestMutateWorkspaceV1alpha2OnUpdate_MissingDWOCStillRejectsStartedUpdate(t *testing.T) {
+	handler := newTestWebhookHandler(t)
+	oldWksp := getDevWorkspaceWithMissingDWOC()
+	newWksp := oldWksp.DeepCopy()
+	newWksp.Annotations = map[string]string{"test.devfile.io/updated": "true"}
+
+	resp := handler.MutateWorkspaceV1alpha2OnUpdate(context.Background(), buildUpdateRequest(t, oldWksp, newWksp))
+	assert.False(t, resp.Allowed, "a started workspace outside deletion still requires a valid DWOC")
+}
+
+func getDevWorkspaceWithMissingDWOC() *dwv2.DevWorkspace {
+	attrs := attributes.Attributes{}
+	attrs.Put(constants.ExternalDevWorkspaceConfiguration, types.NamespacedName{
+		Name:      "missing-dwoc",
+		Namespace: "test-namespace",
+	}, nil)
+	return &dwv2.DevWorkspace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-workspace",
+			Namespace: "test-namespace",
+			Labels: map[string]string{
+				constants.DevWorkspaceCreatorLabel: "test-user-uid",
+			},
+		},
+		Spec: dwv2.DevWorkspaceSpec{
+			Started: true,
+			Template: dwv2.DevWorkspaceTemplateSpec{
+				DevWorkspaceTemplateSpecContent: dwv2.DevWorkspaceTemplateSpecContent{Attributes: attrs},
+			},
+		},
+	}
 }
 
 func getDevWorkspaceWithBrokenKubernetesComponent(started bool) *dwv2.DevWorkspace {

@@ -32,6 +32,7 @@ import (
 	"github.com/devfile/devworkspace-operator/pkg/infrastructure"
 	wsDefaults "github.com/devfile/devworkspace-operator/pkg/library/defaults"
 	"github.com/devfile/devworkspace-operator/pkg/library/flatten"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -170,7 +171,15 @@ func (h *WebhookHandler) MutateWorkspaceV1alpha2OnUpdate(ctx context.Context, re
 		return admission.Denied(msg)
 	}
 
-	changed, code, err := h.ValidateWorkspaceV1alpha2Permissions(ctx, newWksp, oldWksp, req)
+	// Finalizer removal must remain possible when a referenced DWOC disappears.
+	// Only skip permission validation for an already-deleting workspace with an unchanged spec.
+	deletingUnchangedWorkspace := newWksp.DeletionTimestamp != nil && oldWksp.DeletionTimestamp != nil &&
+		equality.Semantic.DeepEqual(oldWksp.Spec, newWksp.Spec)
+	var changed bool
+	var code *int32
+	if !deletingUnchangedWorkspace {
+		changed, code, err = h.ValidateWorkspaceV1alpha2Permissions(ctx, newWksp, oldWksp, req)
+	}
 	if err != nil {
 		isTransitionFromStartToStop := !newWksp.Spec.Started && oldWksp.Spec.Started
 		// Skip permission validation when stopping a workspace: users must always
